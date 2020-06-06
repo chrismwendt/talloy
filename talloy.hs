@@ -22,8 +22,8 @@ main = do
 
 evaluate :: Expression -> IO Value
 evaluate (FunctionCall function argument) = do
-  function' <- evaluate function
   argument' <- evaluate argument
+  function' <- evaluate function
   case (function', argument') of
     (PrimitiveValue "print", StringValue s) -> Unit <$ putStrLn s
     (PrimitiveValue "print", other) -> Unit <$ print other
