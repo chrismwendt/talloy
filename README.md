@@ -12,7 +12,7 @@ So far, it's capable of describing simple programs with `print`, `sleep`, and se
 
 ### Development
 
-Install [ghcid](https://github.com/ndmitchell/ghcid), then ruN:
+Install [ghcid](https://github.com/ndmitchell/ghcid), then run:
 
 ```
 ./dev
