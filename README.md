@@ -1,5 +1,14 @@
 Talloy is a not-very-serious attempt to make a strict impure Haskell with lightweight killable threads, generics, sum and product types, nominal types, and garbage collection, but with strict evaluation and no type-checked purity.
 
+- The interpreter is currently written in Haskell
+- Strict evaluation comes from sequencing the interpreter evaluation in `do` notation
+- Impurity comes from omitting `IO` from functions that interact with the world
+- Lightweight killable threads will come from piggybacking on the GHC runtime
+- Generics are TODO
+- Sum and product types are TODO
+- Nominal types are TODO
+- Garbage collection is TODO
+
 So far, it's capable of describing simple programs with `print`, `sleep`, and sequencing:
 
 ```
