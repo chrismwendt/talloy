@@ -72,7 +72,7 @@ operatorTable =
   ]
 
 binary :: Parser () -> (Expression -> Expression -> Expression) -> Operator Parser Expression
-binary name f = InfixL  (f <$ name)
+binary name f = InfixL (f <$ name)
 
 whitespace :: Parser ()
 whitespace = space
