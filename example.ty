@@ -1,5 +1,6 @@
-{
-  print "hi";
-  sleep 0.5;
-  print "there";
+let {
+  greet = print "one";
+  greet2 = greet;
 }
+in let { greet = print "two"; }
+in greet2

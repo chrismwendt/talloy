@@ -42,3 +42,29 @@ Other ideas that might be interesting to throw in the mix:
 - Everything is Showable, DeepSeqable, Hashable, etc.
 - Stop parsing at blank line to avoid inscrutable parse errors
 - Top level of file is implicit do block like Python, but you can refer to things out of order
+
+### Overloading functions at the call site
+
+```haskell
+let { greet = print; } in dynlet { print arg = primPrint "blah"; } in greet "julien" -- blah
+let { greet = print; } in let    { print arg = primPrint "blah"; } in greet "julien" -- julien
+
+(let
+  (greet (lambda (arg) (print arg)))
+  (dynlet
+    (print (lambda (arg) (primPrint "blah")))
+    (greet "julien"))) -- prints blah
+
+(let
+  (greet (lambda (arg) (print arg)))
+  (let
+    (print (lambda (arg) (primPrint "blah")))
+    (greet "julien"))) -- prints julien
+
+fn = dynlet { print = missiles } in ...
+
+{
+  fn;
+  print "HEY"; -- missles
+}
+```
