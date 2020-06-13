@@ -13,6 +13,7 @@ import Control.Monad
 import System.Timeout
 import Control.Concurrent
 import Data.Map (Map)
+import Data.List (intercalate)
 import qualified Data.Map as Map
 import Debug.Trace
 import Data.Char
@@ -22,7 +23,7 @@ import Data.Function
 type Parser = Parsec Void String
 
 main = do
-  example <- (readFile "example.ty")
+  example <- fmap stripComments (readFile "example.ty")
   void $ timeout 1000000 $ case parse (expression <* eof) "" example of
     Left bundle -> putStr (errorBundlePretty bundle)
     Right parsedExpression -> do
@@ -76,6 +77,11 @@ evaluate ovs bs (Block []) = return Unit
 evaluate ovs bs (Block [statement]) = logeval ovs bs statement
 evaluate ovs bs (Block (statement : rest)) = logeval ovs bs statement >> logeval ovs bs (Block rest)
 evaluate ovs bs (EValue v) = return v
+evaluate ovs bs (If b e1 e2) = do
+  b' <- evaluate ovs bs b
+  case b' of
+    (BooleanValue b) -> if b then evaluate ovs bs e1 else evaluate ovs bs e2
+    x -> error "The input to the if expression was not a boolean"
 -- evaluate ovs bs o = error $ "unrecognized: " ++ show o
 
 pretty :: Expression -> String
@@ -84,12 +90,14 @@ pretty (FunctionCall f a) = "(" ++ pretty f ++ " " ++ pretty a ++ ")"
 pretty (Block statements) = "{ " ++ concatMap (\s -> pretty s ++ "; ") statements ++ "}"
 pretty (Let bindings expr) = "(let { " ++ concatMap (\(n, e) -> n ++ " = " ++ pretty e ++ "; ") (Map.toList bindings) ++ " } in (" ++ pretty expr ++ "))"
 pretty (Override bindings expr) = "(override { " ++ concatMap (\(n, (old, e)) -> n ++ ":" ++ old ++ " = " ++ pretty e ++ "; ") (Map.toList bindings) ++ " } in (" ++ pretty expr ++ "))"
+pretty (If b e1 e2) = "(if (" ++ (pretty b) ++ ") then (" ++ pretty e1 ++ ") else (" ++ pretty e2 ++ "))"
 pretty (EValue v) = prettyV v
 
 prettyV :: Value -> String
 prettyV (PrimitiveValue n) = "name#"
 prettyV (StringValue v) = "\"" ++ v ++ "\""
 prettyV (NumberValue v) = "#" ++ show v
+prettyV (BooleanValue v) = "#" ++ show v
 prettyV (Lambda _ n e) = "(\\" ++ n ++ " -> " ++ pretty e ++ ")"
 prettyV Unit = "Unit"
 
@@ -99,6 +107,7 @@ data Expression =
   | Block [Expression]
   | Let PlainBindings Expression
   | Override (Map String (String, Expression)) Expression
+  | If Expression Expression Expression
   | EValue Value
   deriving (Show)
 
@@ -106,37 +115,60 @@ data Value =
     PrimitiveValue String
   | StringValue String
   | NumberValue Float
+  | BooleanValue Bool
   | Lambda MemorableBindings String Expression
   | Unit
   deriving (Show)
 
 type PlainBindings = Map String Expression
 
-data MemorableBindings = MemorableBindings (Map String (MemorableBindings, Expression)) deriving (Show)
+newtype MemorableBindings = MemorableBindings (Map String (MemorableBindings, Expression)) deriving (Show)
 
 term :: Parser Expression
 term = choice
-  [ do
-    (bindings, expr) <- bindingExpr "let" (some alphaNumChar)
-    return $ Let (Map.fromList bindings) expr
+  [
+    -- Let Bindings
+    do
+      (bindings, expr) <- bindingExpr "let" (some alphaNumChar)
+      return $ Let (Map.fromList bindings) expr
+
+    -- Overrides
   , do
-    let p = do
-          name <- some alphaNumChar
-          char ':'
-          oldname <- some alphaNumChar
-          return (name, oldname)
-    (bindings, expr) <- bindingExpr "override" p
-    return $ Override (Map.fromList $ map (\((name, old), e) -> (name, (old, e))) bindings) expr
+      let p = do
+            name <- some alphaNumChar
+            char ':'
+            oldname <- some alphaNumChar
+            return (name, oldname)
+      (bindings, expr) <- bindingExpr "override" p
+      return $ Override (Map.fromList $ map (\((name, old), e) -> (name, (old, e))) bindings) expr
+
+    -- Nested Expressions
   , charTok '(' *> expression <* charTok ')'
+
+    -- If Statements
+  , ifExpr
+
+    -- Lambdas
   , do
-    charTok '\\'
-    name <- some alphaNumChar <* whitespace
-    strTok "->"
-    e <- expression
-    return $ EValue $ Lambda (MemorableBindings Map.empty) name e
+      charTok '\\'
+      name <- some alphaNumChar <* whitespace
+      strTok "->"
+      e <- expression
+      return $ EValue $ Lambda (MemorableBindings Map.empty) name e
+
+    -- String Values
   , EValue . StringValue <$> (char '"' *> manyTill anySingle (char '"') <* whitespace)
+
+    -- Number Values
   , EValue . NumberValue <$> L.float
+
+    -- Boolean Values
+  , EValue . BooleanValue <$> fmap read (strTok "True" <|> strTok "False")
+
+    -- Variable definitions
   , Variable <$> some alphaNumChar <* whitespace
+
+    -- Blocks
   , Block <$> (charTok '{' *> sepEndBy1 expression (charTok ';') <* charTok '}')
   ]
 
@@ -148,6 +180,16 @@ bindingExpr keyword aP = do
   strTok "in"
   e <- expression
   return $ (m, e)
+
+ifExpr :: Parser Expression
+ifExpr = do
+  strTok "if"
+  b <- term
+  strTok "then"
+  e1 <- term
+  strTok "else"
+  e2 <- term
+  return $ If b e1 e2
 
 expression :: Parser Expression
 expression = makeExprParser term operatorTable
@@ -172,3 +214,26 @@ charTok c = char c <* whitespace
 
 strTok :: String -> Parser String
 strTok str = string str <* whitespace
+
+-- Mostly taken from
+-- https://stackoverflow.com/questions/12940490/how-would-i-strip-out-comments-from-a-file-with-parsec
+stripComments s = fromRight $ parse eatComments "" s
+  where
+    fromRight x = case x of
+      Left _ -> error "Could not strip comments"
+      Right r -> r
+
+    comment :: Parser ()
+    comment =
+        (string "--" >> manyTill anySingle newline >> whitespace >> return ()) <|>
+        (string "{-" >> manyTill anySingle (string "-}") >>  whitespace >> return ())
+
+    notComment = manyTill anySingle (lookAhead (comment <|> eof))
+
+    eatComments :: Parser String
+    eatComments = do
+      optional comment
+      xs <- sepBy notComment comment
+      optional comment
+      return $ intercalate "" xs
+
