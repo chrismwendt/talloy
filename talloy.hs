@@ -34,10 +34,8 @@ main = do
       writeFile "output.hs" $ unlines
         [ "Program:"
         , example
-        , ""
         , "Output:"
         , unlines $ reverse revlines
-        , ""
         , "Return value:"
         , "=> " ++ show value
         ]
@@ -47,6 +45,7 @@ prelude = MemorableBindings $ Map.fromList
   [ ("print", (MemorableBindings Map.empty, EValue (PrimitiveValue "print")))
   , ("sleep", (MemorableBindings Map.empty, EValue (PrimitiveValue "sleep")))
   , ("uppercase", (MemorableBindings Map.empty, EValue (PrimitiveValue "uppercase")))
+  , ("readFile", (MemorableBindings Map.empty, EValue (PrimitiveValue "readFile")))
   ]
 
 logeval :: (String -> IO ()) -> MemorableBindings -> MemorableBindings -> Expression -> IO Value
@@ -71,6 +70,7 @@ evaluate out ovs bs@(MemorableBindings mbs) (FunctionCall function argument) = d
     (PrimitiveValue "sleep", other) -> error "sleep expects a number"
     (PrimitiveValue "uppercase", StringValue s) -> return $ StringValue (map toUpper s)
     (PrimitiveValue "uppercase", other) -> error $ "cannot uppercase " ++ show other
+    (PrimitiveValue "readFile", StringValue filename) -> StringValue <$> readFile filename
     (Lambda (MemorableBindings lbs) name expr, arg) -> logeval out ovs (MemorableBindings (Map.insert name (bs, EValue arg) (lbs `Map.union` mbs))) expr
     (l, r) -> error $ show l ++ " is not a function"
 evaluate out ovs (MemorableBindings bs) (EValue (Lambda (MemorableBindings lbs) name expression)) = return $ Lambda (MemorableBindings (lbs `Map.union` bs)) name expression
