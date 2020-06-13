@@ -19,6 +19,7 @@ import Debug.Trace
 import Data.Char
 import Rainbow
 import Data.Function
+import Data.IORef
 
 type Parser = Parsec Void String
 
@@ -27,14 +28,19 @@ main = do
   void $ timeout 1000000 $ case parse (expression <* eof) "" example of
     Left bundle -> putStr (errorBundlePretty bundle)
     Right parsedExpression -> do
-      putChunkLn $ "Program:" & fore cyan
-      putStrLn example
-      putStrLn ""
-      putChunkLn $ "Output:" & fore cyan
-      value <- evaluate (MemorableBindings Map.empty) prelude parsedExpression
-      putStrLn ""
-      putChunkLn $ "Return value:" & fore cyan
-      putStrLn $ "=> " ++ show value
+      revlinesref <- newIORef []
+      value <- evaluate (\line -> atomicModifyIORef' revlinesref (\x -> (line : x, ()))) (MemorableBindings Map.empty) prelude parsedExpression
+      revlines <- readIORef revlinesref
+      writeFile "output.hs" $ unlines
+        [ "Program:"
+        , example
+        , ""
+        , "Output:"
+        , unlines $ reverse revlines
+        , ""
+        , "Return value:"
+        , "=> " ++ show value
+        ]
 
 prelude :: MemorableBindings
 prelude = MemorableBindings $ Map.fromList
@@ -43,44 +49,44 @@ prelude = MemorableBindings $ Map.fromList
   , ("uppercase", (MemorableBindings Map.empty, EValue (PrimitiveValue "uppercase")))
   ]
 
-logeval :: MemorableBindings -> MemorableBindings -> Expression -> IO Value
-logeval movs@(MemorableBindings ovs) mbs@(MemorableBindings bs) e = do
+logeval :: (String -> IO ()) -> MemorableBindings -> MemorableBindings -> Expression -> IO Value
+logeval out movs@(MemorableBindings ovs) mbs@(MemorableBindings bs) e = do
   -- putStrLn $ unwords (Map.keys ovs) ++ " | " ++ unwords (Map.keys bs) ++ " | " ++ pretty e
-  evaluate movs mbs e
+  evaluate out movs mbs e
 
-evaluate :: MemorableBindings -> MemorableBindings -> Expression -> IO Value
-evaluate ovs (MemorableBindings bs) (Let bindings expression) =
+evaluate :: (String -> IO ()) -> MemorableBindings -> MemorableBindings -> Expression -> IO Value
+evaluate out ovs (MemorableBindings bs) (Let bindings expression) =
   let bs' = MemorableBindings $ bs `Map.union` (Map.fromList $ map (\(name, expr) -> (name, (MemorableBindings bs, expr))) (Map.toList bindings))
-  in logeval ovs bs' expression
-evaluate (MemorableBindings ovs) bs@(MemorableBindings mbs) (Override bindings expression) =
+  in logeval out ovs bs' expression
+evaluate out (MemorableBindings ovs) bs@(MemorableBindings mbs) (Override bindings expression) =
   let ovs' = MemorableBindings $ ovs `Map.union` (Map.fromList $ map (\(name, (old, expr)) -> (name, (MemorableBindings (Map.insert old (mbs Map.! name) mbs), expr))) (Map.toList bindings))
-  in logeval ovs' bs expression
-evaluate ovs bs@(MemorableBindings mbs) (FunctionCall function argument) = do
-  argument' <- logeval ovs bs argument
-  function' <- logeval ovs bs function
+  in logeval out ovs' bs expression
+evaluate out ovs bs@(MemorableBindings mbs) (FunctionCall function argument) = do
+  argument' <- logeval out ovs bs argument
+  function' <- logeval out ovs bs function
   case (function', argument') of
-    (PrimitiveValue "print", StringValue s) -> Unit <$ putStrLn s
-    (PrimitiveValue "print", other) -> Unit <$ print other
+    (PrimitiveValue "print", StringValue s) -> Unit <$ out s
+    (PrimitiveValue "print", other) -> Unit <$ out (show other)
     (PrimitiveValue "sleep", NumberValue n) -> Unit <$ threadDelay (floor (n * 10**6))
     (PrimitiveValue "sleep", other) -> error "sleep expects a number"
     (PrimitiveValue "uppercase", StringValue s) -> return $ StringValue (map toUpper s)
     (PrimitiveValue "uppercase", other) -> error $ "cannot uppercase " ++ show other
-    (Lambda (MemorableBindings lbs) name expr, arg) -> logeval ovs (MemorableBindings (Map.insert name (bs, EValue arg) (lbs `Map.union` mbs))) expr
+    (Lambda (MemorableBindings lbs) name expr, arg) -> logeval out ovs (MemorableBindings (Map.insert name (bs, EValue arg) (lbs `Map.union` mbs))) expr
     (l, r) -> error $ show l ++ " is not a function"
-evaluate ovs (MemorableBindings bs) (EValue (Lambda (MemorableBindings lbs) name expression)) = return $ Lambda (MemorableBindings (lbs `Map.union` bs)) name expression
-evaluate movs@(MemorableBindings ovs) (MemorableBindings bs) (Variable v) = case ovs Map.!? v of
+evaluate out ovs (MemorableBindings bs) (EValue (Lambda (MemorableBindings lbs) name expression)) = return $ Lambda (MemorableBindings (lbs `Map.union` bs)) name expression
+evaluate out movs@(MemorableBindings ovs) (MemorableBindings bs) (Variable v) = case ovs Map.!? v of
   Nothing -> case bs Map.!? v of
     Nothing -> error $ "unknown function " ++ v
-    Just (bs', expr) -> logeval movs bs' expr
-  Just (bs', expr) -> logeval movs bs' expr
-evaluate ovs bs (Block []) = return Unit
-evaluate ovs bs (Block [statement]) = logeval ovs bs statement
-evaluate ovs bs (Block (statement : rest)) = logeval ovs bs statement >> logeval ovs bs (Block rest)
-evaluate ovs bs (EValue v) = return v
-evaluate ovs bs (If b e1 e2) = do
-  b' <- evaluate ovs bs b
+    Just (bs', expr) -> logeval out movs bs' expr
+  Just (bs', expr) -> logeval out movs bs' expr
+evaluate out ovs bs (Block []) = return Unit
+evaluate out ovs bs (Block [statement]) = logeval out ovs bs statement
+evaluate out ovs bs (Block (statement : rest)) = logeval out ovs bs statement >> logeval out ovs bs (Block rest)
+evaluate out ovs bs (EValue v) = return v
+evaluate out ovs bs (If b e1 e2) = do
+  b' <- logeval out ovs bs b
   case b' of
-    (BooleanValue b) -> if b then evaluate ovs bs e1 else evaluate ovs bs e2
+    (BooleanValue b) -> if b then logeval out ovs bs e1 else logeval out ovs bs e2
     x -> error "The input to the if expression was not a boolean"
 -- evaluate ovs bs o = error $ "unrecognized: " ++ show o
 
