@@ -1,3 +1,7 @@
-let { greet = \name -> print name; }
+-- Example of overriding a print function
+let {
+  usename = True;
+  greet = \name -> print (if usename then name else "lame");
+}
 in override { print:oldprint = \str -> oldprint (uppercase str); }
 in greet "john doe"
