@@ -1,7 +1,8 @@
 #!/usr/bin/env stack
--- stack --resolver lts-15.4 --install-ghc ghci --package megaparsec --package parser-combinators --package containers
+-- stack --resolver lts-15.4 --install-ghc ghci --package megaparsec --package parser-combinators --package containers --package rainbow
 
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 import Text.Megaparsec
 import Text.Megaparsec.Char
@@ -15,6 +16,8 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Debug.Trace
 import Data.Char
+import Rainbow
+import Data.Function
 
 type Parser = Parsec Void String
 
@@ -23,7 +26,13 @@ main = do
   void $ timeout 1000000 $ case parse (expression <* eof) "" example of
     Left bundle -> putStr (errorBundlePretty bundle)
     Right parsedExpression -> do
+      putChunkLn $ "Program:" & fore cyan
+      putStrLn example
+      putStrLn ""
+      putChunkLn $ "Output:" & fore cyan
       value <- evaluate (MemorableBindings Map.empty) prelude parsedExpression
+      putStrLn ""
+      putChunkLn $ "Return value:" & fore cyan
       putStrLn $ "=> " ++ show value
 
 prelude :: MemorableBindings
@@ -35,7 +44,7 @@ prelude = MemorableBindings $ Map.fromList
 
 logeval :: MemorableBindings -> MemorableBindings -> Expression -> IO Value
 logeval movs@(MemorableBindings ovs) mbs@(MemorableBindings bs) e = do
-  putStrLn $ unwords (Map.keys ovs) ++ " | " ++ unwords (Map.keys bs) ++ " | " ++ pretty e
+  -- putStrLn $ unwords (Map.keys ovs) ++ " | " ++ unwords (Map.keys bs) ++ " | " ++ pretty e
   evaluate movs mbs e
 
 evaluate :: MemorableBindings -> MemorableBindings -> Expression -> IO Value
