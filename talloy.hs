@@ -23,8 +23,15 @@ main = do
   void $ timeout 1000000 $ case parse (expression <* eof) "" example of
     Left bundle -> putStr (errorBundlePretty bundle)
     Right parsedExpression -> do
-      value <- evaluate (MemorableBindings Map.empty) (MemorableBindings Map.empty) parsedExpression
+      value <- evaluate (MemorableBindings Map.empty) prelude parsedExpression
       putStrLn $ "=> " ++ show value
+
+prelude :: MemorableBindings
+prelude = MemorableBindings $ Map.fromList
+  [ ("print", (MemorableBindings Map.empty, EValue (PrimitiveValue "print")))
+  , ("sleep", (MemorableBindings Map.empty, EValue (PrimitiveValue "sleep")))
+  , ("uppercase", (MemorableBindings Map.empty, EValue (PrimitiveValue "uppercase")))
+  ]
 
 logeval :: MemorableBindings -> MemorableBindings -> Expression -> IO Value
 logeval movs@(MemorableBindings ovs) mbs@(MemorableBindings bs) e = do
@@ -46,22 +53,16 @@ evaluate ovs bs@(MemorableBindings mbs) (FunctionCall function argument) = do
     (PrimitiveValue "print", other) -> Unit <$ print other
     (PrimitiveValue "sleep", NumberValue n) -> Unit <$ threadDelay (floor (n * 10**6))
     (PrimitiveValue "sleep", other) -> error "sleep expects a number"
-    (PrimitiveValue "TOUPPER", StringValue s) -> return $ StringValue (map toUpper s)
-    (PrimitiveValue "TOUPPER", other) -> error $ "cannot TOUPPER " ++ show other
-    (Lambda name expr, arg) -> logeval ovs (MemorableBindings (Map.insert name (bs, EValue arg) mbs)) expr
+    (PrimitiveValue "uppercase", StringValue s) -> return $ StringValue (map toUpper s)
+    (PrimitiveValue "uppercase", other) -> error $ "cannot uppercase " ++ show other
+    (Lambda (MemorableBindings lbs) name expr, arg) -> logeval ovs (MemorableBindings (Map.insert name (bs, EValue arg) (lbs `Map.union` mbs))) expr
     (l, r) -> error $ show l ++ " is not a function"
-evaluate ovs bs (EValue (Lambda name expression)) = return $ Lambda name expression
+evaluate ovs (MemorableBindings bs) (EValue (Lambda (MemorableBindings lbs) name expression)) = return $ Lambda (MemorableBindings (lbs `Map.union` bs)) name expression
 evaluate movs@(MemorableBindings ovs) (MemorableBindings bs) (Variable v) = case ovs Map.!? v of
   Nothing -> case bs Map.!? v of
-    Nothing -> case v of
-      "print" -> return (PrimitiveValue "print")
-      "sleep" -> return (PrimitiveValue "sleep")
-      "TOUPPER" -> return (PrimitiveValue "TOUPPER")
-      other -> error $ "unknown function " ++ other
+    Nothing -> error $ "unknown function " ++ v
     Just (bs', expr) -> logeval movs bs' expr
   Just (bs', expr) -> logeval movs bs' expr
-evaluate ovs bs (StringLiteral str) = return (StringValue str)
-evaluate ovs bs (NumberLiteral number) = return (NumberValue number)
 evaluate ovs bs (Block []) = return Unit
 evaluate ovs bs (Block [statement]) = logeval ovs bs statement
 evaluate ovs bs (Block (statement : rest)) = logeval ovs bs statement >> logeval ovs bs (Block rest)
@@ -70,8 +71,6 @@ evaluate ovs bs (EValue v) = return v
 
 pretty :: Expression -> String
 pretty (Variable v) = "$" ++ v
-pretty (StringLiteral v) = "!" ++ v
-pretty (NumberLiteral v) = "#" ++ show v
 pretty (FunctionCall f a) = "(" ++ pretty f ++ " " ++ pretty a ++ ")"
 pretty (Block statements) = "{ " ++ concatMap (\s -> pretty s ++ "; ") statements ++ "}"
 pretty (Let bindings expr) = "(let { " ++ concatMap (\(n, e) -> n ++ " = " ++ pretty e ++ "; ") (Map.toList bindings) ++ " } in (" ++ pretty expr ++ "))"
@@ -82,13 +81,11 @@ prettyV :: Value -> String
 prettyV (PrimitiveValue n) = "name#"
 prettyV (StringValue v) = "\"" ++ v ++ "\""
 prettyV (NumberValue v) = "#" ++ show v
-prettyV (Lambda n e) = "(\\" ++ n ++ " -> " ++ pretty e ++ ")"
+prettyV (Lambda _ n e) = "(\\" ++ n ++ " -> " ++ pretty e ++ ")"
 prettyV Unit = "Unit"
 
 data Expression =
     Variable String
-  | StringLiteral String
-  | NumberLiteral Float
   | FunctionCall Expression Expression
   | Block [Expression]
   | Let PlainBindings Expression
@@ -100,7 +97,7 @@ data Value =
     PrimitiveValue String
   | StringValue String
   | NumberValue Float
-  | Lambda String Expression
+  | Lambda MemorableBindings String Expression
   | Unit
   deriving (Show)
 
@@ -127,9 +124,9 @@ term = choice
     name <- some alphaNumChar <* whitespace
     strTok "->"
     e <- expression
-    return $ EValue $ Lambda name e
-  , StringLiteral <$> (char '"' *> manyTill anySingle (char '"') <* whitespace)
-  , NumberLiteral <$> L.float
+    return $ EValue $ Lambda (MemorableBindings Map.empty) name e
+  , EValue . StringValue <$> (char '"' *> manyTill anySingle (char '"') <* whitespace)
+  , EValue . NumberValue <$> L.float
   , Variable <$> some alphaNumChar <* whitespace
   , Block <$> (charTok '{' *> sepEndBy1 expression (charTok ';') <* charTok '}')
   ]
