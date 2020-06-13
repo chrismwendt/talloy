@@ -64,12 +64,14 @@ prelude = MemorableBindings $ Map.fromList
   , ("readFile", (MemorableBindings Map.empty, EValue (PrimitiveValue "readFile")))
   , ("tail", (MemorableBindings Map.empty, EValue (PrimitiveValue "tail")))
   , ("null", (MemorableBindings Map.empty, EValue (PrimitiveValue "null")))
+  , ("head", (MemorableBindings Map.empty, EValue (PrimitiveValue "head")))
+  , ("==", (MemorableBindings Map.empty, EValue (PrimitiveValue "==")))
   , ("+", (MemorableBindings Map.empty, EValue (PrimitiveValue "+")))
   ]
 
 logeval :: (String -> IO ()) -> MemorableBindings -> MemorableBindings -> Expression -> IO Value
 logeval out movs@(MemorableBindings ovs) mbs@(MemorableBindings bs) e = do
-  -- putStrLn $ unwords (Map.keys ovs) ++ " | " ++ unwords (Map.keys bs) ++ " | " ++ pretty e
+  putStrLn $ unwords (Map.keys ovs) ++ " | " ++ unwords (Map.keys bs) ++ " | " ++ pretty e
   evaluate out movs mbs e
 
 evaluate :: (String -> IO ()) -> MemorableBindings -> MemorableBindings -> Expression -> IO Value
@@ -90,9 +92,11 @@ evaluate out ovs bs@(MemorableBindings mbs) (FunctionCall function argument) = d
     (PrimitiveValue "uppercase", StringValue s) -> return $ StringValue (map toUpper s)
     (PrimitiveValue "uppercase", other) -> error $ "cannot uppercase " ++ prettyV other
     (PrimitiveValue "readFile", StringValue filename) -> StringValue <$> readFile filename
+    (PrimitiveValue "head", StringValue str) -> return $ StringValue [head str]
     (PrimitiveValue "tail", StringValue str) -> return $ StringValue (tail str)
     (PrimitiveValue "null", StringValue str) -> return $ BooleanValue (null str)
     (PrimFnValue f, arg) -> return $ f arg
+    (PrimitiveValue "==", v1) -> return $ PrimFnValue (BooleanValue . (v1 ==))
     (PrimitiveValue "+", NumberValue num) -> return $ PrimFnValue (\case
       NumberValue v -> NumberValue (num + v)
       other -> error $ "can't add " ++ prettyV other)
@@ -101,7 +105,7 @@ evaluate out ovs bs@(MemorableBindings mbs) (FunctionCall function argument) = d
 evaluate out ovs (MemorableBindings bs) (EValue (Lambda (MemorableBindings lbs) name expression)) = return $ Lambda (MemorableBindings (lbs `Map.union` bs)) name expression
 evaluate out movs@(MemorableBindings ovs) (MemorableBindings bs) (Variable v) = case ovs Map.!? v of
   Nothing -> case bs Map.!? v of
-    Nothing -> error $ "unknown function " ++ v
+    Nothing -> error $ "unknown name " ++ v
     Just (bs', expr) -> logeval out movs bs' expr
   Just (bs', expr) -> logeval out movs bs' expr
 evaluate out ovs bs (Block []) = return Unit
@@ -125,7 +129,7 @@ pretty (If b e1 e2) = "(if (" ++ (pretty b) ++ ") then (" ++ pretty e1 ++ ") els
 pretty (EValue v) = prettyV v
 
 prettyV :: Value -> String
-prettyV (PrimitiveValue n) = "name#"
+prettyV (PrimitiveValue n) = n ++ "#"
 prettyV (PrimFnValue n) = "primFn"
 prettyV (StringValue v) = "\"" ++ v ++ "\""
 prettyV (NumberValue v) = "#" ++ show v
@@ -150,6 +154,16 @@ data Value =
   | PrimFnValue (Value -> Value)
   | Lambda MemorableBindings String Expression
   | Unit
+
+instance Eq Value where
+  PrimitiveValue l == PrimitiveValue r = l == r
+  StringValue l == StringValue r = l == r
+  NumberValue l == NumberValue r = l == r
+  BooleanValue l == BooleanValue r = l == r
+  PrimFnValue l == PrimFnValue r = False -- TODO can represent fns as expressions and check for equality?
+  Lambda lbs ln le == Lambda rbs rn re = False -- can check for equality?
+  Unit == Unit = True
+  _ == _ = False
 
 type PlainBindings = Map String Expression
 
@@ -231,6 +245,10 @@ operatorTable =
   , [ InfixL (do
       charTok '+'
       return (\l r -> FunctionCall (FunctionCall (Variable "+") l) r))
+    ]
+  , [ InfixL (do
+      strTok "=="
+      return (\l r -> FunctionCall (FunctionCall (Variable "==") l) r))
     ]
   ]
 
