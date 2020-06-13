@@ -3,6 +3,7 @@
 
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE LambdaCase #-}
 
 import Text.Megaparsec
 import Text.Megaparsec.Char
@@ -20,15 +21,30 @@ import Data.Char
 import Rainbow
 import Data.Function
 import Data.IORef
+import Control.Exception (throwIO, ArithException(Overflow))
 
 type Parser = Parsec Void String
 
+main2 = print $ wc "it began with two words"
+
+wc :: String -> Int
+wc s =
+  let
+    loop inword str = if null str
+      then 0
+      else if head str == ' '
+        then loop False (tail str)
+        else (if inword then 0 else 1) + loop True (tail str)
+  in
+    loop False s
+
 main = do
-  example <- fmap stripComments (readFile "example.ty")
+  example <- fmap stripComments (readFile "example2.ty")
   void $ timeout 1000000 $ case parse (expression <* eof) "" example of
     Left bundle -> putStr (errorBundlePretty bundle)
     Right parsedExpression -> do
       revlinesref <- newIORef []
+      putStrLn $ pretty parsedExpression
       value <- evaluate (\line -> atomicModifyIORef' revlinesref (\x -> (line : x, ()))) (MemorableBindings Map.empty) prelude parsedExpression
       revlines <- readIORef revlinesref
       writeFile "output.hs" $ unlines
@@ -37,7 +53,7 @@ main = do
         , "Output:"
         , unlines $ reverse revlines
         , "Return value:"
-        , "=> " ++ show value
+        , "=> " ++ prettyV value
         ]
 
 prelude :: MemorableBindings
@@ -46,6 +62,9 @@ prelude = MemorableBindings $ Map.fromList
   , ("sleep", (MemorableBindings Map.empty, EValue (PrimitiveValue "sleep")))
   , ("uppercase", (MemorableBindings Map.empty, EValue (PrimitiveValue "uppercase")))
   , ("readFile", (MemorableBindings Map.empty, EValue (PrimitiveValue "readFile")))
+  , ("tail", (MemorableBindings Map.empty, EValue (PrimitiveValue "tail")))
+  , ("null", (MemorableBindings Map.empty, EValue (PrimitiveValue "null")))
+  , ("+", (MemorableBindings Map.empty, EValue (PrimitiveValue "+")))
   ]
 
 logeval :: (String -> IO ()) -> MemorableBindings -> MemorableBindings -> Expression -> IO Value
@@ -65,14 +84,20 @@ evaluate out ovs bs@(MemorableBindings mbs) (FunctionCall function argument) = d
   function' <- logeval out ovs bs function
   case (function', argument') of
     (PrimitiveValue "print", StringValue s) -> Unit <$ out s
-    (PrimitiveValue "print", other) -> Unit <$ out (show other)
+    (PrimitiveValue "print", other) -> Unit <$ out (prettyV other)
     (PrimitiveValue "sleep", NumberValue n) -> Unit <$ threadDelay (floor (n * 10**6))
     (PrimitiveValue "sleep", other) -> error "sleep expects a number"
     (PrimitiveValue "uppercase", StringValue s) -> return $ StringValue (map toUpper s)
-    (PrimitiveValue "uppercase", other) -> error $ "cannot uppercase " ++ show other
+    (PrimitiveValue "uppercase", other) -> error $ "cannot uppercase " ++ prettyV other
     (PrimitiveValue "readFile", StringValue filename) -> StringValue <$> readFile filename
+    (PrimitiveValue "tail", StringValue str) -> return $ StringValue (tail str)
+    (PrimitiveValue "null", StringValue str) -> return $ BooleanValue (null str)
+    (PrimFnValue f, arg) -> return $ f arg
+    (PrimitiveValue "+", NumberValue num) -> return $ PrimFnValue (\case
+      NumberValue v -> NumberValue (num + v)
+      other -> error $ "can't add " ++ prettyV other)
     (Lambda (MemorableBindings lbs) name expr, arg) -> logeval out ovs (MemorableBindings (Map.insert name (bs, EValue arg) (lbs `Map.union` mbs))) expr
-    (l, r) -> error $ show l ++ " is not a function"
+    (l, r) -> error $ prettyV l ++ " is not a function"
 evaluate out ovs (MemorableBindings bs) (EValue (Lambda (MemorableBindings lbs) name expression)) = return $ Lambda (MemorableBindings (lbs `Map.union` bs)) name expression
 evaluate out movs@(MemorableBindings ovs) (MemorableBindings bs) (Variable v) = case ovs Map.!? v of
   Nothing -> case bs Map.!? v of
@@ -101,6 +126,7 @@ pretty (EValue v) = prettyV v
 
 prettyV :: Value -> String
 prettyV (PrimitiveValue n) = "name#"
+prettyV (PrimFnValue n) = "primFn"
 prettyV (StringValue v) = "\"" ++ v ++ "\""
 prettyV (NumberValue v) = "#" ++ show v
 prettyV (BooleanValue v) = "#" ++ show v
@@ -115,20 +141,19 @@ data Expression =
   | Override (Map String (String, Expression)) Expression
   | If Expression Expression Expression
   | EValue Value
-  deriving (Show)
 
 data Value =
     PrimitiveValue String
   | StringValue String
   | NumberValue Float
   | BooleanValue Bool
+  | PrimFnValue (Value -> Value)
   | Lambda MemorableBindings String Expression
   | Unit
-  deriving (Show)
 
 type PlainBindings = Map String Expression
 
-newtype MemorableBindings = MemorableBindings (Map String (MemorableBindings, Expression)) deriving (Show)
+newtype MemorableBindings = MemorableBindings (Map String (MemorableBindings, Expression))
 
 term :: Parser Expression
 term = choice
@@ -166,7 +191,7 @@ term = choice
   , EValue . StringValue <$> (char '"' *> manyTill anySingle (char '"') <* whitespace)
 
     -- Number Values
-  , EValue . NumberValue <$> L.float
+  , EValue . NumberValue <$> L.decimal <* whitespace
 
     -- Boolean Values
   , EValue . BooleanValue <$> fmap read (strTok "True" <|> strTok "False")
@@ -202,7 +227,10 @@ expression = makeExprParser term operatorTable
 
 operatorTable :: [[Operator Parser Expression]]
 operatorTable =
-  [ [ binary (void $ many (char ' ')) FunctionCall
+  [ [ binary (void $ many (char ' ') *> notFollowedBy (char '+')) FunctionCall ]
+  , [ InfixL (do
+      charTok '+'
+      return (\l r -> FunctionCall (FunctionCall (Variable "+") l) r))
     ]
   ]
 
@@ -242,4 +270,3 @@ stripComments s = fromRight $ parse eatComments "" s
       xs <- sepBy notComment comment
       optional comment
       return $ intercalate "" xs
-

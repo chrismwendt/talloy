@@ -1,0 +1,4 @@
+let {
+  loop = \str -> if (null str) then 0 else (1 + loop (tail str));
+}
+in loop "hi there"
