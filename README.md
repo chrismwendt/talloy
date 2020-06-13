@@ -47,6 +47,6 @@ Other ideas that might be interesting to throw in the mix:
 
 ```haskell
 let { greet = \name -> print name; }
-in override { print = \str -> print (TOUPPER str); }
+in override { print:oldprint = \str -> oldprint (uppercase str); }
 in greet "john doe"
 ```
