@@ -1,4 +1,3 @@
-let { greet = print "one"; }
-in let { greet2 = greet; }
-in override { greet = print "two"; }
-in greet2
+let { greet = \name -> print name; }
+in override { print:oldprint = \str -> oldprint (TOUPPER str); }
+in greet "john doe"

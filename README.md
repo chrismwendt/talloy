@@ -48,5 +48,5 @@ Other ideas that might be interesting to throw in the mix:
 ```haskell
 let { greet = \name -> print name; }
 in override { print = \str -> print (TOUPPER str); }
-in greet "john doe" -- prints JOHN DOE
+in greet "john doe"
 ```
