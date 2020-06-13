@@ -46,25 +46,7 @@ Other ideas that might be interesting to throw in the mix:
 ### Overloading functions at the call site
 
 ```haskell
-let { greet = print; } in dynlet { print arg = primPrint "blah"; } in greet "julien" -- blah
-let { greet = print; } in let    { print arg = primPrint "blah"; } in greet "julien" -- julien
-
-(let
-  (greet (lambda (arg) (print arg)))
-  (dynlet
-    (print (lambda (arg) (primPrint "blah")))
-    (greet "julien"))) -- prints blah
-
-(let
-  (greet (lambda (arg) (print arg)))
-  (let
-    (print (lambda (arg) (primPrint "blah")))
-    (greet "julien"))) -- prints julien
-
-fn = dynlet { print = missiles } in ...
-
-{
-  fn;
-  print "HEY"; -- missles
-}
+let { greet = \name -> print name; }
+in override { print = \str -> print (TOUPPER str); }
+in greet "john doe" -- prints JOHN DOE
 ```

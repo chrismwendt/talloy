@@ -1,6 +1,4 @@
-let {
-  greet = print "one";
-  greet2 = greet;
-}
-in let { greet = print "two"; }
+let { greet = print "one"; }
+in let { greet2 = greet; }
+in override { greet = print "two"; }
 in greet2
