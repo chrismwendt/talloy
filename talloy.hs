@@ -1,5 +1,5 @@
 #!/usr/bin/env stack
--- stack --resolver lts-15.4 --install-ghc ghci --package megaparsec --package parser-combinators --package containers --package rainbow
+-- stack --resolver lts-16.26 --install-ghc ghci --package megaparsec --package parser-combinators --package containers --package rainbow
 
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE OverloadedStrings #-}
